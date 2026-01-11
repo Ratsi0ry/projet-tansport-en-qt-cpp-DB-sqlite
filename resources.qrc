@@ -1,0 +1,17 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icon/billet.png</file>
+        <file>icon/ecole-de-bus.png</file>
+        <file>icon/la-personne.png</file>
+        <file>icon/page-daccueil.png</file>
+        <file>icon/panneau-de-localisation.png</file>
+        <file>icon/pointeur-de-point-de-carte.png</file>
+        <file>icon/rappel.png</file>
+        <file>icon/broche-de-localisation.png</file>
+        <file>icon/bus-scolaire.png</file>
+        <file>icon/ticket-de-bus.png</file>
+        <file>icon/car-seat_17385084.png</file>
+        <file>icon/libre.png</file>
+        <file>icon/reservee.png</file>
+    </qresource>
+</RCC>
