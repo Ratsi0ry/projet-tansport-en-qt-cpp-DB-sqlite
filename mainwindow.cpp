@@ -21,7 +21,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->tabWidget->setCurrentIndex(0);
 
     //date
-    QString dateDujour = QDate::currentDate().toString("dd//MM//yyyy");
+    QString dateDujour = QDate::currentDate().toString("dd/MM/yyyy");
     ui->lineEditDate->setPlaceholderText(dateDujour);
 
     //QCombobox depart & arivee
@@ -105,6 +105,8 @@ MainWindow::MainWindow(QWidget *parent)
     //icon status place
     iconFree = QIcon(":/icon/libre.png");
     iconSelected = QIcon(":/icon/reservee.png");
+    qDebug() << "iconFree null:" << iconFree.isNull();
+    qDebug() << "iconSelected null:" << iconSelected.isNull();
 
     //BASE DE DONNEES
     qDebug() << "Drivers SQl disponibles:" << QSqlDatabase::drivers();
@@ -119,16 +121,56 @@ MainWindow::MainWindow(QWidget *parent)
     qDebug() << "DB utilisee:" << db.databaseName();
     qDebug() << "DB ouverte?:" << db.isOpen();
 
+    QSqlQuery pragmaQ;
+    pragmaQ.exec("PRAGMA foreign_keys = ON;");
 
     QSqlQuery q;
-    q.exec("CREATE TABLE IF NOT EXISTS client("
-           "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-           "nom TEXT, prenom TEXT, contact TEXT, cin TEXT, email TEXT,"
-           "villeDepart TEXT, villeArrivee TEXT,"
-           "heureDepart TEXT, dateReservation TEXT,"
-           "categorieClient TEXT, numPlace TEXT,"
-           "nbPlaceReserver INTEGER, nbBagages INTEGER,"
-           "poidsBagages REAl, prix REAL, especes REAl, monnaie REAL)");
+
+    //Table client
+    if(!q.exec(R"(
+           CREATE TABLE IF NOT EXISTS client(
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           nom TEXT,
+           prenom TEXT,
+           contact TEXT,
+           cin TEXT,
+           email TEXT);
+    )")) {
+        qDebug() << "Failed to create table client:" << q.lastError().text();
+    }
+
+    //Table reservation
+    if(!q.exec(R"(
+           CREATE TABLE IF NOT EXISTS reservation(
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           client_id INTEGER,
+           villeDepart TEXT,
+           villeArrivee TEXT,
+           dateReservation TEXT,
+           heureDepart TEXT,
+           nbPlaceReservees INTEGER,
+           nbBagages REAL,
+           poidsBagages REAL,
+           categorie TEXT,
+           prix REAL,
+           especes REAL,
+           monnaie REAL,
+           FOREIGN KEY(client_id) REFERENCES client(id));
+    )")) {
+        qDebug() << "Failed to create table reservation:" << q.lastError().text();
+    }
+
+    //Table reservation_place
+    if(!q.exec(R"(
+           CREATE TABLE IF NOT EXISTS reservation_place (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           reservation_id INTEGER,
+           numPlace INTEGER,
+           FOREIGN KEY(reservation_id) REFERENCES reservation(id));
+    )")) {
+        qDebug() << "Failed to create table reservation_place:" << q.lastError().text();
+    }
+
 
 }
 
@@ -142,6 +184,9 @@ Client client; // regroupe les info sur le client
 void MainWindow::changerTab2()
 {
     int indexActuel = ui->tabWidget->currentIndex();
+    if (indexActuel + 1 == 2) {  // Si on va vers l'onglet des places
+        mettreAJourplaces();
+    }
     ui->tabWidget->setCurrentIndex(indexActuel + 1);
 }
 
@@ -173,8 +218,6 @@ void MainWindow::on_pushButtonValider1_clicked()
     if(date.isEmpty()) {
        QMessageBox::warning(this,"erreur", "Remplisser tous les champs svp!");
     }
-
-    sauvegarderClient(client);
 
     changerTab2();
 
@@ -415,17 +458,118 @@ void MainWindow::on_pushButtonValider2_clicked()
     calculPaiment(montantPaye);
 
     if(montantPaye > client.prix){
+        // Update the reservation with payment info
+        client.especes = montantPaye;
+        client.monnaie = montantPaye - client.prix;
+
+        QSqlQuery qUpdate;
+        qUpdate.prepare("UPDATE reservation SET especes = :e, monnaie = :m WHERE id = :id");
+        qUpdate.bindValue(":e", client.especes);
+        qUpdate.bindValue(":m", client.monnaie);
+        qUpdate.bindValue(":id", lastResId);
+
+        if(!qUpdate.exec()) {
+            QMessageBox::warning(this,"Erreur","Erreur lors de la mise a jour de la reservation: " + qUpdate.lastError().text());
+            return;
+        }
+
+        if(lastResId == 0) {
+            QMessageBox::warning(this,"Erreur","ID de reservation invalide");
+            return;
+        }
+
+        // Insérer les places sélectionnées
+        for(int numPlace : client.places) {
+            QSqlQuery qPlace;
+            qPlace.prepare("INSERT INTO reservation_place (reservation_id, numPlace) VALUES (:rid, :np)");
+            qPlace.bindValue(":rid", lastResId);
+            qPlace.bindValue(":np", numPlace);
+            if(!qPlace.exec()) {
+                QMessageBox::warning(this,"Erreur","Erreur lors de l'insertion de la place " + QString::number(numPlace) + ": " + qPlace.lastError().text());
+            }
+        }
         changerTab2();
     }else {
         QMessageBox::warning(this,"Erreur","Veuillez payer la somme indiquer svp");
     }
 }
 
+//affichage place deja occupee
+bool MainWindow::estPlaceLibre(
+    const QString& villeDepart,
+    const QString& villeArrivee,
+    const QString& date,
+    const QString& heure,
+    int numPlace
+    ) {
+
+    if(!QSqlDatabase::database().isOpen()) {
+        qDebug() << "DB not open in estPlaceLibre";
+        return true; // assume free
+    }
+
+    QSqlQuery q;
+
+    q.prepare(
+        "SELECT COUNT(*)"
+        "FROM reservation r"
+        "JOIN reservation_place rp ON r.id = rp.reservation_id"
+        "WHERE r.villeDepart = :vd"
+        "AND r.villeArrivee = :va"
+        "AND r.dateReservation = :d"
+        "AND r.heureDepart = :h"
+        "AND rp.numPlace = :n"
+        );
+
+    q.bindValue(":vd",villeDepart);
+    q.bindValue(":va",villeArrivee);
+    q.bindValue(":d",date);
+    q.bindValue(":h",heure);
+    q.bindValue(":n",numPlace);
+
+    if(!q.exec()) {
+        qDebug() << "Erreur SQL estPlaceLibre:" << q.lastError().text() << "for place" << numPlace;
+        return true; // assume free
+    }
+
+    q.next();
+    int count = q.value(0).toInt();
+    qDebug() << "Count for place" << numPlace << ":" << count;
+
+    return count == 0; //true = libre
+}
+
+
+void MainWindow::mettreAJourplaces()
+{
+    QString vd = client.villeDepart;
+    QString va = client.villeArivee;
+    QString date = client.dateReservation;
+    QString heure = client.heureDepart;
+
+    for(int num = 1; num <= 20; ++num) {
+        QAbstractButton* btn = place->buttons().at(num - 1);  // Suppose que les boutons sont dans l'ordre 1 à 20
+        if(!estPlaceLibre(vd, va, date, heure, num)) {
+            btn->setEnabled(false);
+            btn->setIcon(iconSelected);
+            btn->setIconSize(QSize(24,24));
+        } else {
+            btn->setEnabled(true);
+            if(btn->isChecked()) {
+                btn->setIcon(iconSelected);
+            } else {
+                btn->setIcon(iconFree);
+            }
+            btn->setIconSize(QSize(24,24));
+        }
+    }
+}
 
 
 //SLOT UNIQUE NUMERO DE PLACE
 void MainWindow::onSetPlaceClicked(QAbstractButton* button)
 {
+
     int max = client.nbPlaceReserver;
     int selectionees = 0;
 
@@ -444,16 +588,23 @@ void MainWindow::onSetPlaceClicked(QAbstractButton* button)
 
     button->setIcon(button->isChecked() ? iconSelected : iconFree);
 
+    button->setIconSize(QSize(24,24));
+
     //Mis a jour des places selectionnees
     QStringList placeSelectionnees;
+    client.places.clear();  // Vider la liste avant de la remplir
 
     for (QAbstractButton * btn : place->buttons()) {
         if(btn->isChecked()) {
             placeSelectionnees << btn->text();
+            client.places << btn->text().toInt();  // Ajouter le numéro de place à la liste
         }
     }
 
     ui->billetPlace->setText(placeSelectionnees.join(", "));
+
+    mettreAJourplaces();
+
 }
 
 
@@ -461,31 +612,70 @@ void MainWindow::onSetPlaceClicked(QAbstractButton* button)
 void MainWindow::sauvegarderClient(const Client &client) {
     QSqlQuery q;
     q.prepare(
-        "INSERT INTO client(nom, prenom, contact, cin, email, villeDepart, villeArrivee, heureDepart, dateReservation,categorieClient, numPlace, nbPlaceReserver, nbBagages, poidsBagages, prix, especes, monnaie) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        "INSERT INTO client("
+        "nom,"
+        "prenom,"
+        "contact,"
+        "cin,"
+        "email)"
+        " VALUES (:n,:p,:ct,:cin,:em)"
+        );
 
-    q.addBindValue(client.nom);
-    q.addBindValue(client.prenom);
-    q.addBindValue(client.contact);
-    q.addBindValue(client.cin);
-    q.addBindValue(client.email);
-    q.addBindValue(client.villeDepart);
-    q.addBindValue(client.villeArivee);
-    q.addBindValue(client.heureDepart);
-    q.addBindValue(client.dateReservation);
-    q.addBindValue(client.categorieClient);
-    q.addBindValue(client.numPlace);
-    q.addBindValue(client.nbPlaceReserver);
-    q.addBindValue(client.nbBagages);
-    q.addBindValue(client.PoidsBagages);
-    q.addBindValue(client.prix);
-    q.addBindValue(client.especes);
-    q.addBindValue(client.monnaie);
+    q.bindValue(":n", client.nom);
+    q.bindValue(":p", client.prenom);
+    q.bindValue(":ct", client.contact);
+    q.bindValue(":cin", client.cin);
+    q.bindValue(":em", client.email);
 
     if(!q.exec()) {
-        qDebug() << "INSERT FAILED";
-        qDebug() << q.lastError().text();
+        QMessageBox::warning(this,"Erreur","Erreur lors de l'insertion du client: " + q.lastError().text());
         qDebug() << q.lastQuery();
+        return;  // Sortir si échec
     }
+
+    int clientId = q.lastInsertId().toInt();  // Récupérer l'ID du client inséré
+
+    q.prepare(
+        "INSERT INTO reservation("
+        "client_id,"
+        "villeDepart,"
+        "villeArrivee,"
+        "dateReservation,"
+        "heureDepart,"
+        "nbPlaceReservees,"
+        "nbBagages,"
+        "poidsBagages,"
+        "categorie,"
+        "prix,"
+        "especes,"
+        "monnaie)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+        );
+
+    q.bindValue(0, clientId);
+    q.bindValue(1, client.villeDepart);
+    q.bindValue(2, client.villeArivee);
+    q.bindValue(3, client.dateReservation);
+    q.bindValue(4, client.heureDepart);
+    q.bindValue(5, client.nbPlaceReserver);
+    q.bindValue(6, client.nbBagages);
+    q.bindValue(7, client.PoidsBagages);
+    q.bindValue(8, client.categorieClient);
+    q.bindValue(9, client.prix);
+    q.bindValue(10, client.especes);
+    q.bindValue(11, client.monnaie);
+
+
+    if(!q.exec()) {
+        QMessageBox::warning(this,"Erreur","Erreur lors de l'insertion de la reservation: " + q.lastError().text());
+        qDebug() << q.lastQuery();
+        return;  // Sortir si échec
+    }
+
+    lastResId = q.lastInsertId().toInt();  // Stocker l'ID de la réservation
+
+    int resId = q.lastInsertId().toInt();  // Récupérer l'ID de la réservation
+
 }
 
 
