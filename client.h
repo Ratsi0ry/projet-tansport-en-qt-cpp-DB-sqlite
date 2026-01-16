@@ -2,6 +2,7 @@
 #define CLIENT_H
 
 #include<QString>
+#include<QList>
 using namespace std;
 
 struct Client{
@@ -15,7 +16,7 @@ struct Client{
     QString heureDepart;
     QString dateReservation;
     QString categorieClient;
-    QString numPlace;
+    QList<int> places;  // Liste des numéros de places sélectionnées
     int nbPlaceReserver;
     int nbBagages;
     double PoidsBagages;

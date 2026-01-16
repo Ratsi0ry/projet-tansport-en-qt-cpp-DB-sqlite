@@ -9,6 +9,8 @@
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QDebug>
+#include <QSet>
+#include <QList>
 
 
 MainWindow::MainWindow(QWidget *parent)
@@ -170,7 +172,6 @@ MainWindow::MainWindow(QWidget *parent)
     )")) {
         qDebug() << "Failed to create table reservation_place:" << q.lastError().text();
     }
-
 
 }
 
@@ -453,6 +454,7 @@ void MainWindow::calculPaiment(double montant)
 
 void MainWindow::on_pushButtonValider2_clicked()
 {
+    qDebug() << "valider2 called, lastResId:" << lastResId;
     double montantPaye = ui->doubleSpinBoxEspeces->value();
 
     calculPaiment(montantPaye);
@@ -488,6 +490,23 @@ void MainWindow::on_pushButtonValider2_clicked()
                 QMessageBox::warning(this,"Erreur","Erreur lors de l'insertion de la place " + QString::number(numPlace) + ": " + qPlace.lastError().text());
             }
         }
+
+        // Verrouiller immédiatement les boutons pour les places réservées
+        for(int numPlace : client.places) {
+            if(numPlace >= 1 && numPlace <= place->buttons().size()) {
+                QAbstractButton* btn = place->buttons().at(numPlace - 1);
+                if(btn) {
+                    btn->setChecked(false);
+                    btn->setEnabled(false);
+                    btn->setIcon(iconSelected);
+                    btn->setIconSize(QSize(24,24));
+                }
+            }
+        }
+
+        // mettre à jour l'affichage des places
+        mettreAJourplaces();
+
         changerTab2();
     }else {
         QMessageBox::warning(this,"Erreur","Veuillez payer la somme indiquer svp");
@@ -502,6 +521,8 @@ bool MainWindow::estPlaceLibre(
     const QString& heure,
     int numPlace
     ) {
+
+    qDebug() << "estPlaceLibre called for place" << numPlace << "vd:" << villeDepart << "va:" << villeArrivee << "date:" << date << "heure:" << heure;
 
     if(!QSqlDatabase::database().isOpen()) {
         qDebug() << "DB not open in estPlaceLibre";
@@ -536,21 +557,77 @@ bool MainWindow::estPlaceLibre(
     int count = q.value(0).toInt();
     qDebug() << "Count for place" << numPlace << ":" << count;
 
-    return count == 0; //true = libre
+    bool result = count == 0;
+    qDebug() << "estPlaceLibre result:" << result;
+    return result; //true = libre
 }
+
+
+QList<int> MainWindow::getReservedPlaces(const QString& villeDepart, const QString& villeArrivee, const QString& date, const QString& heure) {
+    QList<int> reserved;
+    if(!QSqlDatabase::database().isOpen()) {
+        qDebug() << "DB not open in getReservedPlaces";
+        return reserved;
+    }
+
+    QSqlQuery q;
+    q.prepare(
+        "SELECT rp.numPlace "
+        "FROM reservation r "
+        "JOIN reservation_place rp ON r.id = rp.reservation_id "
+        "WHERE r.villeDepart = :vd "
+        "AND r.villeArrivee = :va "
+        "AND r.dateReservation = :d "
+        "AND r.heureDepart = :h"
+    );
+    q.bindValue(":vd", villeDepart);
+    q.bindValue(":va", villeArrivee);
+    q.bindValue(":d", date);
+    q.bindValue(":h", heure);
+
+    if(!q.exec()) {
+        qDebug() << "Erreur SQL getReservedPlaces:" << q.lastError().text();
+        return reserved;
+    }
+
+    while(q.next()) {
+        reserved.append(q.value(0).toInt());
+    }
+
+    return reserved;
+}
+
+
+/*int MainWindow::getAvailableSeats(const QString& villeDepart, const QString& villeArrivee, const QString& date, const QString& heure)
+{
+    int totalSeats = 20; // bus a 20 places
+    QList<int> reserved = getReservedPlaces(villeDepart, villeArrivee, date, heure);
+    int used = reserved.size();
+    int avail = totalSeats - used;
+    return avail < 0 ? 0 : avail;
+}*/
 
 
 void MainWindow::mettreAJourplaces()
 {
+    qDebug() << "mettreAJourplaces called";
     QString vd = client.villeDepart;
     QString va = client.villeArivee;
     QString date = client.dateReservation;
     QString heure = client.heureDepart;
+    qDebug() << "vd:" << vd << "va:" << va << "date:" << date << "heure:" << heure;
 
-    for(int num = 1; num <= 20; ++num) {
+    // récupérer les places réservées depuis la BD et les mettre en set pour accès rapide
+    QList<int> reserved = getReservedPlaces(vd, va, date, heure);
+    QSet<int> reservedSet;
+    for(int r : reserved) reservedSet.insert(r);
+
+    int total = place->buttons().size();
+    for(int num = 1; num <= total; ++num) {
         QAbstractButton* btn = place->buttons().at(num - 1);  // Suppose que les boutons sont dans l'ordre 1 à 20
-        if(!estPlaceLibre(vd, va, date, heure, num)) {
+        if(reservedSet.contains(num)) {
             btn->setEnabled(false);
+            btn->setChecked(false);
             btn->setIcon(iconSelected);
             btn->setIconSize(QSize(24,24));
         } else {
@@ -673,6 +750,8 @@ void MainWindow::sauvegarderClient(const Client &client) {
     }
 
     lastResId = q.lastInsertId().toInt();  // Stocker l'ID de la réservation
+
+    qDebug() << "lastResId set to:" << lastResId;
 
     int resId = q.lastInsertId().toInt();  // Récupérer l'ID de la réservation
 

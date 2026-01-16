@@ -46,6 +46,12 @@ private:
     //pour gerer les places
     QIcon iconFree;
     QIcon iconSelected;
+    int lastResId;
+
+    void mettreAJourplaces();
+    bool estPlaceLibre(const QString& villeDepart, const QString& villeArrivee, const QString& date, const QString& heure, int numPlace);
+    // récupère numéros des places réservées pour un trajet/date/heure
+    QList<int> getReservedPlaces(const QString& villeDepart, const QString& villeArrivee, const QString& date, const QString& heure);
 
 };
 #endif // MAINWINDOW_H
