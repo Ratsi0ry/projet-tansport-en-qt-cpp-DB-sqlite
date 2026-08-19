@@ -4,14 +4,14 @@ Bienvenue dans **Projet Transport**, une application Qt/C++ pour gerer les **res
 Un projet simple mais efficace pour apprendre **Qt**, **Sqlite** et le **developpement d'interface moderne**.
 
 ---
-## 💡Fonctionnalites
+##Fonctionnalites
 - ajouter/gerer des clients avec:nom, prenom, contact, CIN, email, ville de depart & arrivee, date et heure de reservation categorie du client, num place, nombre deplace a reserver, bagages,prix, payment en especes et monnaie
 - **sauvegarde automatique dan sqlite**
 - interface simple et reactive grace a QT Widgets
 
-## 🛠️ Installation & compilation
+##Installation & compilation
 
-### Prerequis
+###Prerequis
 - **Qt6.x ou 5.x**
 - **CMAKE 3.20+**
 - **Compiler C++ moderne (MSVCA / MinGw/ Gcc)
